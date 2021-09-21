@@ -1,4 +1,4 @@
-# vmctrlcli
+# vmctrl
 Control virtual units through commands in input.
 
 ## Disclaimer
