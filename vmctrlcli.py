@@ -12,13 +12,33 @@ def str_to_dict(s):
 def program(*args, **kwargs):
 	return Popen([*args], **kwargs)
 
-def qm(*args, **kwargs):
-	# Access vvirtual machines
-	return program("qm", *args, **kwargs)
+class qm:
+	@staticmethod
+	def start(vmid):
+		return program("qm", "start", vmid)
+	@staticmethod
+	def shutdown(vmid):
+		return program("qm", "shutdown", vmid)
+	@staticmethod
+	def config(vmid):
+		return program("qm", "config", vmid, stdout=PIPE)
+	@staticmethod
+	def list():
+		return program("qm", "list", stdout=PIPE)
 
-def pct(*args, **kwargs):
-	# Access containers
-	return program("pct", *args, **kwargs)
+class pct:
+	@staticmethod
+	def start(vmid):
+		return program("pct", "start", vmid)
+	@staticmethod
+	def shutdown(vmid):
+		return program("pct", "shutdown", vmid)
+	@staticmethod
+	def config(vmid):
+		return program("pct", "config", vmid, stdout=PIPE)
+	@staticmethod
+	def list():
+		return program("pct", "list", stdout=PIPE)
 
 class VirtualUnit:
 	def __init__(self, prgm, vmid, *, name="", status="unknown"):
@@ -34,7 +54,7 @@ class VirtualUnit:
 		if DRY:
 			print("started {}".format(self.name or self.vmid))
 			return
-		proc = self.__prgm("start", self.vmid)
+		proc = self.__prgm.start(self.vmid)
 		proc.wait()
 		self.status = "running"
 	def shutdown(self):
@@ -43,13 +63,13 @@ class VirtualUnit:
 		if DRY:
 			print("stopped {}".format(self.name or self.vmid))
 			return
-		proc = self.__prgm("shutdown", self.vmid)
+		proc = self.__prgm.shutdown(self.vmid)
 		proc.wait()
 		self.status = "stopped"
 	def config(self, *, force=False):
 		if not force and len(self.__config):
 			return self.__config
-		proc = self.__prgm("config", self.vmid, stdout=PIPE)
+		proc = self.__prgm.config(self.vmid)
 		proc.stdout.readline()
 		config = {}
 		for line in proc.stdout.readlines():
@@ -129,7 +149,7 @@ class Daemon:
 			return val
 
 def vm_list():
-	proc = qm("list", stdout=PIPE)
+	proc = qm.list()
 	proc.stdout.readline()
 	for line in proc.stdout.readlines():
 		line = line.decode().strip().split()
@@ -141,7 +161,7 @@ def vm_list():
 	proc.wait()
 
 def ct_list():
-	proc = pct("list", stdout=PIPE)
+	proc = pct.list()
 	proc.stdout.readline()
 	for line in proc.stdout.readlines():
 		line = line.decode().strip().split()
