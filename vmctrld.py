@@ -118,7 +118,7 @@ class Daemon:
 				delay = unit.delay_up()
 				if delay:
 					self.__sleep.wait(timeout=delay)
-			elif cmd == "stop":
+			elif cmd == "shutdown":
 				unit.shutdown()
 	def abort(self):
 		self.__run = False
@@ -213,7 +213,7 @@ def virtual_prepare_start(vms=[]):
 				l.append(u)
 	return sorted(l, key=VirtualUnit.order)
 
-def virtual_prepare_stop(vms=[]):
+def virtual_prepare_shutdown(vms=[]):
 	if vms is []:
 		l = [u for u in virtual_get_running()]
 	else:
@@ -245,9 +245,9 @@ def main(argv):
 			if cmd == "start":
 				for u in virtual_prepare_start(args):
 					daemon.add("start", u)
-			elif cmd == "stop":
-				for u in virtual_prepare_stop(args):
-					daemon.add("stop", u)
+			elif cmd == "shutdown":
+				for u in virtual_prepare_shutdown(args):
+					daemon.add("shutdown", u)
 			elif cmd == "list":
 				# Only for debugging
 				if len(args) == 0:
