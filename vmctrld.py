@@ -6,8 +6,52 @@ from threading import Thread, Condition, Event
 
 DRY = False
 
+class Status:
+	UNKNOWN = -1
+	STOPPED = 0
+	RUNNING = 1
+	PAUSED = 2
+
+class Cmd:
+	UNKNOWN = -1
+	START = 0
+	SHUTDOWN = 1
+	RESUME = 2
+	SUSPEND = 3
+	HIBERNATE = 4
+
+str_status = {
+	"stopped": Status.STOPPED,
+	"running": Status.RUNNING,
+	"paused": Status.PAUSED
+}
+
+str_cmd = {
+	"start": Cmd.START,
+	"shutdown": Cmd.SHUTDOWN,
+	"resume": Cmd.RESUME,
+	"suspend": Cmd.SUSPEND,
+	"hibernate": Cmd.HIBERNATE
+}
+
+def inv_dict(d):
+	return {v: k for k, v in d.items()}
+
+status_str = inv_dict(str_status)
+cmd_str = inv_dict(str_cmd)
+
 def str_to_dict(s):
 	return dict(item.split("=") for item in s.split(","))
+
+class Sleep:
+	def __init__(self):
+		self.__event = Event()
+	def __call__(self, timeout):
+		self.__event.wait(timeout=timeout)
+	def wake(self):
+		self.__event.set()
+	def clear(self):
+		self.__event.clear()
 
 def program(*args, **kwargs):
 	return Popen([*args], **kwargs)
@@ -20,8 +64,20 @@ class qm:
 	def shutdown(vmid):
 		return program("qm", "shutdown", vmid)
 	@staticmethod
+	def resume(vmid):
+		return program("qm", "resume", vmid)
+	@staticmethod
+	def suspend(vmid):
+		return program("qm", "suspend", vmid)
+	@staticmethod
+	def hibernate(vmid):
+		return program("qm", "suspend", vmid, "--todisk", "1")
+	@staticmethod
 	def config(vmid):
 		return program("qm", "config", vmid, stdout=PIPE)
+	@staticmethod
+	def status(vmid):
+		return program("qm", "status", vmid, stdout=PIPE)
 	@staticmethod
 	def list():
 		return program("qm", "list", stdout=PIPE)
@@ -33,39 +89,53 @@ class pct:
 	@staticmethod
 	def shutdown(vmid):
 		return program("pct", "shutdown", vmid)
+	# Note: Containers are unable to suspend due to a bug
+	@classmethod
+	def resume(cls, vmid):
+		return cls.start(vmid)
+	@classmethod
+	def suspend(cls, vmid):
+		return cls.shutdown(vmid)
+	@classmethod
+	def hibernate(cls, vmid):
+		return cls.shutdown(vmid)
 	@staticmethod
 	def config(vmid):
 		return program("pct", "config", vmid, stdout=PIPE)
+	@staticmethod
+	def status(vmid):
+		return program("pct", "status", vmid, stdout=PIPE)
 	@staticmethod
 	def list():
 		return program("pct", "list", stdout=PIPE)
 
 class VirtualUnit:
-	def __init__(self, prgm, vmid, *, name="", status="unknown"):
+	def __init__(self, prgm, vmid, *, name="", status=Status.UNKNOWN):
 		self.__prgm = prgm
 		self.vmid = vmid
 		self.name = name
 		self.status = status
 		# Cache
 		self.__config = {}
+	def __change_state(self, new_status, old_status, cmd):
+		if self.status in old_status:
+			return
+		if DRY:
+			print("{} {}".format(status_str[new_status], self.name or self.vmid))
+			return
+		proc = cmd(self.vmid)
+		proc.wait()
+		self.status = new_status
 	def start(self):
-		if self.status == "running":
-			return
-		if DRY:
-			print("started {}".format(self.name or self.vmid))
-			return
-		proc = self.__prgm.start(self.vmid)
-		proc.wait()
-		self.status = "running"
+		self.__change_state(Status.RUNNING, [Status.RUNNING], self.__prgm.start)
 	def shutdown(self):
-		if self.status == "stopped":
-			return
-		if DRY:
-			print("stopped {}".format(self.name or self.vmid))
-			return
-		proc = self.__prgm.shutdown(self.vmid)
-		proc.wait()
-		self.status = "stopped"
+		self.__change_state(Status.STOPPED, [Status.STOPPED], self.__prgm.shutdown)
+	def resume(self):
+		self.__change_state(Status.RUNNING, [Status.RUNNING], self.__prgm.resume)
+	def suspend(self):
+		self.__change_state(Status.PAUSED, [Status.STOPPED, Status.PAUSED], self.__prgm.suspend)
+	def hibernate(self):
+		self.__change_state(Status.STOPPED, [Status.STOPPED], self.__prgm.hibernate)
 	def config(self, *, force=False):
 		if not force and len(self.__config):
 			return self.__config
@@ -79,7 +149,7 @@ class VirtualUnit:
 		self.__config = config
 		return config
 	def running(self):
-		return self.status == "running"
+		return self.status == Status.RUNNING
 	def onboot(self):
 		config = self.config()
 		if "onboot" in config:
@@ -91,7 +161,7 @@ class VirtualUnit:
 			startup = str_to_dict(config["startup"])
 			if "order" in startup:
 				return int(startup["order"])
-		return None
+		return 2**10000 # Infinite enough
 	def delay_up(self):
 		config = self.config()
 		if "startup" in config:
@@ -102,44 +172,57 @@ class VirtualUnit:
 	def __eq__(self, other):
 		return self.vmid == other
 
+class UnitAction:
+	def __init__(self, cmd, unit, run):
+		self.cmd = cmd
+		self.unit = unit
+		self.__run = run
+
+	def __call__(self):
+		return self.__run(self.unit)
+
+	def __eq__(self, other):
+		return self.unit == other
+
+	def should_cancel(self, action):
+		return self.cmd != action.cmd
+
 class Daemon:
 	def __init__(self, *args, **kwargs):
 		self.__lock = Condition()
 		self.__queue = []
-		self.__sleep = Event()
+		self.__sleep = Sleep()
 		self.__run = True
 		self.__thread = Thread(target=self.run, args=args, kwargs=kwargs)
 		self.__thread.start()
 	def run(self):
 		while self.__run:
-			(cmd, unit) = self.get()
-			if cmd == "start":
-				unit.start()
-				delay = unit.delay_up()
-				if delay:
-					self.__sleep.wait(timeout=delay)
-			elif cmd == "shutdown":
-				unit.shutdown()
+			action = self.get()
+			delay = action()
+			if delay:
+				self.__sleep(delay)
 	def abort(self):
 		self.__run = False
 		with self.__lock:
-			self.__queue.insert(0, ("dummy", None))
+			self.__queue = [lambda: None]
 			self.__lock.notify_all()
-		self.__sleep.set()
+		self.__sleep.wake()
 		self.__thread.join()
 		self.__queue = []
-	def add(self, cmd, unit):
+	def add(self, action):
+		with self.__lock:
+			self.__queue.append(action)
+			self.__lock.notify()
+	def try_cancel(self, action):
 		with self.__lock:
 			for i in range(len(self.__queue)):
-				(c, v) = self.__queue[i]
-				if v == unit:
-					# Ignore consecutive identical calls
-					if c != cmd:
-						print("Abort {} on {}".format(c, unit.name or unit.vmid))
+				a = self.__queue[i]
+				if a == action:
+					if a.should_cancel(action):
+						print("Abort {} on {}".format(cmd_str[a.cmd], a.unit.name or a.unit.vmid))
 						del self.__queue[i]
-					return
-			self.__queue.append((cmd, unit))
-			self.__lock.notify()
+					return True
+		return False
 	def get(self):
 		with self.__lock:
 			while not len(self.__queue):
@@ -157,6 +240,8 @@ def vm_list():
 			print("Unable to parse line: '{}'".format(line))
 			continue
 		(vmid, name, status, *_) = line
+		status = qm.status(vmid) # List is lying(paused=running), so check manually
+		status = str_status[status] if status in str_status else Status.UNKNOWN
 		yield VirtualUnit(qm, vmid, name=name, status=status)
 	proc.wait()
 
@@ -172,6 +257,7 @@ def ct_list():
 		else:
 			print("Unable to parse line: '{}'".format(line))
 			continue
+		status = str_status[status] if status in str_status else Status.UNKNOWN
 		yield VirtualUnit(pct, vmid, name=name, status=status)
 	proc.wait()
 
@@ -202,14 +288,14 @@ def virtual_find(arg):
 
 def virtual_prepare_start(vms=[]):
 	if vms is []:
-		l = [u for u in virtual_get_onboot() if u.status != "running"]
+		l = [u for u in virtual_get_onboot() if not u.running()]
 	else:
 		l = []
 		for vm in vms:
 			u = virtual_find(vm)
 			if u is None:
 				continue
-			if u.status != "running":
+			if not u.running():
 				l.append(u)
 	return sorted(l, key=VirtualUnit.order)
 
@@ -226,13 +312,21 @@ def virtual_prepare_shutdown(vms=[]):
 	return sorted(l, key=VirtualUnit.order, reverse=True)
 
 def main(argv):
+	def start_delay(unit):
+		unit.start()
+		return unit.delay_up()
+	actions = {
+		Cmd.START:     (virtual_prepare_start, start_delay),
+		Cmd.SHUTDOWN:  (virtual_prepare_shutdown, VirtualUnit.shutdown),
+		Cmd.RESUME:    (virtual_prepare_start, VirtualUnit.resume),
+		Cmd.SUSPEND:   (virtual_prepare_shutdown, VirtualUnit.suspend),
+		Cmd.HIBERNATE: (virtual_prepare_shutdown, VirtualUnit.hibernate)
+	}
 	daemon = Daemon()
 	try:
 		while True:
 			try:
 				line = sys.stdin.readline()
-			except KeyboardInterrupt:
-				break
 			except Exception as e:
 				print(e)
 				continue
@@ -242,12 +336,13 @@ def main(argv):
 			if len(cmds) == 0:
 				continue
 			(cmd, *args) = cmds
-			if cmd == "start":
-				for u in virtual_prepare_start(args):
-					daemon.add("start", u)
-			elif cmd == "shutdown":
-				for u in virtual_prepare_shutdown(args):
-					daemon.add("shutdown", u)
+			# Command to one or more units
+			if cmd in str_cmd:
+				action = str_cmd[cmd]
+				for u in actions[action][0](args):
+					a = UnitAction(action, u, actions[action][1])
+					if not daemon.try_cancel(a):
+						daemon.add(a)
 			elif cmd == "list":
 				# Only for debugging
 				if len(args) == 0:
