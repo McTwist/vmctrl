@@ -288,15 +288,14 @@ def virtual_find(arg):
 
 def virtual_prepare_start(vms=[]):
 	if vms is []:
-		l = [u for u in virtual_get_onboot() if not u.running()]
+		l = [u for u in virtual_get_onboot()]
 	else:
 		l = []
 		for vm in vms:
 			u = virtual_find(vm)
 			if u is None:
 				continue
-			if not u.running():
-				l.append(u)
+			l.append(u)
 	return sorted(l, key=VirtualUnit.order)
 
 def virtual_prepare_shutdown(vms=[]):
@@ -322,6 +321,7 @@ def main(argv):
 		Cmd.SUSPEND:   (virtual_prepare_shutdown, VirtualUnit.suspend),
 		Cmd.HIBERNATE: (virtual_prepare_shutdown, VirtualUnit.hibernate)
 	}
+	states = {}
 	daemon = Daemon()
 	try:
 		while True:
@@ -343,6 +343,28 @@ def main(argv):
 					a = UnitAction(action, u, actions[action][1])
 					if not daemon.try_cancel(a):
 						daemon.add(a)
+			elif cmd == "save":
+				if len(args) == 0:
+					continue
+				if args[0] in states:
+					print("State {} already exist".format(args[0]))
+					continue
+				state = []
+				for u in virtual_prepare_shutdown(args[1:]):
+					state.append(u.vmid)
+				states[args[0]] = state
+			elif cmd == "load":
+				if len(args) == 0:
+					continue
+				if args[0] not in states:
+					print("State {} does not exist".format(args[0]))
+					continue
+				state = states[args[0]]
+				for u in virtual_prepare_start(state):
+					a = UnitAction(Cmd.START, u, start_delay)
+					if not daemon.try_cancel(a):
+						daemon.add(a)
+				del states[args[0]]
 			elif cmd == "list":
 				# Only for debugging
 				if len(args) == 0:
