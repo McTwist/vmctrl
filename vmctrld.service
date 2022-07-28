@@ -1,0 +1,18 @@
+[Unit]
+Description=Control daemon for PVE system
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/sbin/vmctrld
+Restart=on-failure
+RestartSec=5s
+
+Sockets=vmctrld.socket
+StandardInput=socket
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

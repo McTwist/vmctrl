@@ -1,0 +1,8 @@
+[Unit]
+PartOf=vmctrld.service
+
+[Socket]
+ListenFIFO=%t/vmctrld.in
+SockerUser=root
+SocketGroup=root
+RemoveOnStop=on
