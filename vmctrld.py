@@ -19,6 +19,7 @@ class Cmd:
 	RESUME = 2
 	SUSPEND = 3
 	HIBERNATE = 4
+	STOP = 5
 
 str_status = {
 	"stopped": Status.STOPPED,
@@ -31,7 +32,8 @@ str_cmd = {
 	"shutdown": Cmd.SHUTDOWN,
 	"resume": Cmd.RESUME,
 	"suspend": Cmd.SUSPEND,
-	"hibernate": Cmd.HIBERNATE
+	"hibernate": Cmd.HIBERNATE,
+	"stop": Cmd.STOP
 }
 
 def inv_dict(d):
@@ -73,6 +75,9 @@ class qm:
 	def hibernate(vmid):
 		return program("qm", "suspend", vmid, "--todisk", "1")
 	@staticmethod
+	def stop(vmid):
+		return program("qm", "stop", vmid)
+	@staticmethod
 	def config(vmid):
 		return program("qm", "config", vmid, stdout=PIPE)
 	@staticmethod
@@ -99,6 +104,9 @@ class pct:
 	@classmethod
 	def hibernate(cls, vmid):
 		return cls.shutdown(vmid)
+	@staticmethod
+	def stop(vmid):
+		return program("pct", "stop", vmid)
 	@staticmethod
 	def config(vmid):
 		return program("pct", "config", vmid, stdout=PIPE)
@@ -136,6 +144,8 @@ class VirtualUnit:
 		self.__change_state(Status.PAUSED, [Status.STOPPED, Status.PAUSED], self.__prgm.suspend)
 	def hibernate(self):
 		self.__change_state(Status.STOPPED, [Status.STOPPED], self.__prgm.hibernate)
+	def stop(self):
+		self.__change_state(Status.STOPPED, [Status.STOPPED], self.__prgm.stop)
 	def config(self, *, force=False):
 		if not force and len(self.__config):
 			return self.__config
@@ -319,7 +329,8 @@ def main(argv):
 		Cmd.SHUTDOWN:  (virtual_prepare_shutdown, VirtualUnit.shutdown),
 		Cmd.RESUME:    (virtual_prepare_start, VirtualUnit.resume),
 		Cmd.SUSPEND:   (virtual_prepare_shutdown, VirtualUnit.suspend),
-		Cmd.HIBERNATE: (virtual_prepare_shutdown, VirtualUnit.hibernate)
+		Cmd.HIBERNATE: (virtual_prepare_shutdown, VirtualUnit.hibernate),
+		Cmd.STOP:      (virtual_prepare_shutdown, VirtualUnit.stop)
 	}
 	states = {}
 	daemon = Daemon()
