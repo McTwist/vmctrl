@@ -17,8 +17,8 @@ Run the script as a daemon with `systemd` with an included fifo-pipe for stdin. 
 
 ## Usage
 Run the script and you may now input commands. Each command is issued with an enter.
-- `start [vmid/name ...]` Start all units that has the `onboot` flag enabled. Providing any number of vmid or name will start those units specifically, ignoring the `onboot` flag.
-- `stop [vmid/name ...]` Stop all units. Providung any number of vmid or name will stop those units specifically.
+- `start [vmid/name/tag ...]` Start all units that has the `onboot` flag enabled. Providing any number of vmid or name will start those units specifically, ignoring the `onboot` flag.
+- `stop [vmid/name/tag ...]` Stop all units. Providung any number of vmid or name will stop those units specifically.
 - `list` List all units.
   - `list running` List the running units.
   - `list onboot` List units that are started on boot.
