@@ -179,6 +179,11 @@ class VirtualUnit:
 			if "up" in startup:
 				return int(startup["up"])
 		return None
+	def tags(self):
+		config = self.config()
+		if "tags" in config:
+			return config["tags"].split(';')
+		return []
 	def __eq__(self, other):
 		return self.vmid == other
 
@@ -289,10 +294,10 @@ def virtual_get_running():
 
 def virtual_find(arg):
 	for c in ct_list():
-		if c.vmid == arg or c.name == arg:
+		if c.vmid == arg or c.name == arg or arg in c.tags():
 			return c
 	for v in vm_list():
-		if v.vmid == arg or v.name == arg:
+		if v.vmid == arg or v.name == arg or arg in v.tags():
 			return v
 	return None
 
